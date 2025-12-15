@@ -66,8 +66,8 @@ func newSmuxConfig() *smux.Config {
 
 // readRequestHeaders lê até o CRLF CRLF (com limite) e retorna um map de headers (lowercase).
 func readRequestHeaders(r *bufio.Reader, limit int) (string, map[string]string, error) {
-	var sb strings.Builder
-	hdrs := make(map[string]string)
+	var buf strings.Builder
+	headers := make(map[string]string)
 	total := 0
 
 	for {
@@ -75,25 +75,30 @@ func readRequestHeaders(r *bufio.Reader, limit int) (string, map[string]string, 
 		if err != nil {
 			return "", nil, err
 		}
+
 		total += len(line)
 		if total > limit {
 			return "", nil, errors.New("header too large")
 		}
-		sb.WriteString(line)
-		// fim de headers
+
+		buf.WriteString(line)
+
+		// fim real do header
 		if line == "\r\n" {
 			break
 		}
-		// coletar key: value
+
 		if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
-			k := strings.ToLower(strings.TrimSpace(parts[0]))
-			v := strings.TrimSpace(parts[1])
-			hdrs[k] = v
+			key := strings.ToLower(strings.TrimSpace(parts[0]))
+			val := strings.TrimSpace(parts[1])
+			headers[key] = val
 		}
 	}
-	return sb.String(), hdrs, nil
+
+	return buf.String(), headers, nil
 }
+
 
 // proxyCopy garante fechamento apropriado quando uma das cópias termina
 func proxyCopy(dst net.Conn, src net.Conn, cancel context.CancelFunc) {
@@ -210,17 +215,17 @@ func clientHandler(conn net.Conn) {
 	}()
 
 	// definir deadline curto para leitura do header
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	r := bufio.NewReader(conn)
 
-	_, hdrs, err := readRequestHeaders(r, readHeaderLimit)
-	if err != nil {
-		// não fez handshake corretamente: fechar
-		logger.Println("Erro leitura headers:", err)
-		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\nServer: KaihoVPN\r\n\r\n"))
-		conn.Close()
-		return
-	}
+	raw, hdrs, err := readRequestHeaders(r, readHeaderLimit)
+if err != nil {
+	logger.Println("Erro leitura headers:", err)
+	logger.Println("Headers parciais recebidos:\n", raw)
+	conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+	conn.Close()
+	return
+}
 	// limpar deadline
 	_ = conn.SetReadDeadline(time.Time{})
 
@@ -247,11 +252,12 @@ func clientHandler(conn net.Conn) {
 	}
 
 	// verificar upgrade websocket mínimo
-	if v, ok := hdrs["upgrade"]; !ok || !strings.Contains(strings.ToLower(v), "websocket") {
-		_, _ = conn.Write([]byte("HTTP/1.1 403 Payload invalida\r\nServer: KaihoVPN\r\n\r\nPayload Invalida :)"))
-		conn.Close()
-		return
-	}
+if v, ok := hdrs["upgrade"]; !ok || !strings.Contains(strings.ToLower(v), "websocket") {
+	conn.Write([]byte("HTTP/1.1 403 Upgrade required\r\n\r\n"))
+	conn.Close()
+	return
+}
+
 
 	// autenticação: procurar headers "user" e "password"
 	u, uok := hdrs["user"]
