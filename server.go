@@ -215,7 +215,7 @@ func clientHandler(conn net.Conn) {
 	}()
 
 	// definir deadline curto para leitura do header
-	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	r := bufio.NewReader(conn)
 
 	raw, hdrs, err := readRequestHeaders(r, readHeaderLimit)
